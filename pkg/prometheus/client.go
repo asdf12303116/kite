@@ -146,7 +146,7 @@ func (c *Client) GetResourceUsageHistory(ctx context.Context, instance string, d
 		return nil, fmt.Errorf("error querying Network outgoing bytes: %w", err)
 	}
 
-	if len(cpuData) == 0 || len(memoryData) == 0 || len(networkInData) == 0 || len(networkOutData) == 0 {
+	if len(cpuData) == 0 && len(memoryData) == 0 && len(networkInData) == 0 && len(networkOutData) == 0 {
 		return nil, fmt.Errorf("metrics-server or kube-state-metrics may not be available or configured correctly")
 	}
 
