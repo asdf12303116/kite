@@ -126,7 +126,7 @@ func (c *Client) GetResourceUsageHistory(ctx context.Context, instance string, d
 	}
 
 	conditions = []string{
-		`id="/"`,
+		`id=~"/.*"`,
 	}
 	if instance != "" {
 		conditions = append(conditions, fmt.Sprintf(`node="%s"`, instance))
@@ -297,7 +297,6 @@ func (c *Client) GetDiskReadUsage(ctx context.Context, namespace, podNamePrefix,
 		conditions = append(conditions, fmt.Sprintf(`namespace="%s"`, namespace))
 	}
 	query := fmt.Sprintf(`sum(rate(container_fs_reads_bytes_total{%s}[1m]))`, strings.Join(conditions, ","))
-	fmt.Println(query)
 	return c.queryRange(ctx, query, start, now, step)
 }
 
