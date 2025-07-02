@@ -106,7 +106,7 @@ func (c *Client) GetResourceUsageHistory(ctx context.Context, instance string, d
 		`resource="memory"`,
 	}
 	if instance != "" {
-		conditions = append(conditions, fmt.Sprintf(`instance="%s"`, instance))
+		conditions = append(conditions, fmt.Sprintf(`node="%s"`, instance))
 		cpuConditions = append(cpuConditions, fmt.Sprintf(`node="%s"`, instance))
 		memoryConditions = append(memoryConditions, fmt.Sprintf(`node="%s"`, instance))
 	}
@@ -129,7 +129,7 @@ func (c *Client) GetResourceUsageHistory(ctx context.Context, instance string, d
 		`id="/"`,
 	}
 	if instance != "" {
-		conditions = append(conditions, fmt.Sprintf(`instance="%s"`, instance))
+		conditions = append(conditions, fmt.Sprintf(`node="%s"`, instance))
 	}
 
 	// Query Network incoming bytes rate (bytes per second)
