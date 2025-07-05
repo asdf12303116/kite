@@ -105,11 +105,17 @@ func setupAPIRouter(r *gin.Engine, cm *cluster.ClusterManager) {
 		resourceApplyHandler := handlers.NewResourceApplyHandler()
 		api.POST("/resources/apply", resourceApplyHandler.ApplyResource)
 
+		api.GET("/image/tags", handlers.GetImageTags)
+
 		resources.RegisterRoutes(api)
 	}
 }
 
 func setupWebhookRouter(r *gin.Engine, cm *cluster.ClusterManager) {
+	if !common.WebhookEnabled {
+		klog.Info("Webhook is not enabled, skipping webhook routes setup")
+		return
+	}
 	webhookGroup := r.Group("/api/v1/webhooks", gin.BasicAuth(gin.Accounts{
 		common.WebhookUsername: common.WebhookPassword,
 	}), middleware.ClusterMiddleware(cm))
