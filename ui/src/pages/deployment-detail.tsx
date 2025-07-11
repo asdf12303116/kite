@@ -17,11 +17,10 @@ import {
   restartDeployment,
   scaleDeployment,
   updateResource,
-  useDeploymentRelated,
   useResource,
   useResources,
 } from '@/lib/api'
-import { getDeploymentStatus } from '@/lib/k8s'
+import { getDeploymentStatus, toSimpleContainer } from '@/lib/k8s'
 import { formatDate } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -42,7 +41,7 @@ import { LabelsAnno } from '@/components/lables-anno'
 import { LogViewer } from '@/components/log-viewer'
 import { PodMonitoring } from '@/components/pod-monitoring'
 import { PodTable } from '@/components/pod-table'
-import { ServiceTable } from '@/components/service-table'
+import { RelatedResourcesTable } from '@/components/related-resource-table'
 import { Terminal } from '@/components/terminal'
 import { VolumeTable } from '@/components/volume-table'
 import { YamlEditor } from '@/components/yaml-editor'
@@ -71,22 +70,20 @@ export function DeploymentDetail(props: { namespace: string; name: string }) {
     refreshInterval,
   })
 
-  // Fetch related resources
-  const { data: relatedResources, isLoading: isLoadingRelated } =
-    useDeploymentRelated(namespace, name, {
-      refreshInterval,
-    })
-
   const labelSelector = deployment?.spec?.selector.matchLabels
     ? Object.entries(deployment.spec.selector.matchLabels)
         .map(([key, value]) => `${key}=${value}`)
         .join(',')
     : undefined
-  const { data: relatedPods } = useResources('pods', namespace, {
-    labelSelector,
-    refreshInterval,
-    disable: !deployment?.spec?.selector.matchLabels,
-  })
+  const { data: relatedPods, isLoading: isLoadingPods } = useResources(
+    'pods',
+    namespace,
+    {
+      labelSelector,
+      refreshInterval,
+      disable: !deployment?.spec?.selector.matchLabels,
+    }
+  )
 
   useEffect(() => {
     if (deployment) {
@@ -195,37 +192,49 @@ export function DeploymentDetail(props: { namespace: string; name: string }) {
     }
   }
 
-  const handleContainerUpdate = async (updatedContainer: Container) => {
+  const handleContainerUpdate = async (
+    updatedContainer: Container,
+    init = false
+  ) => {
     if (!deployment) return
 
     try {
       // Create a deep copy of the deployment
       const updatedDeployment = { ...deployment }
 
-      // Update the specific container in the deployment spec
-      if (updatedDeployment.spec?.template?.spec?.containers) {
-        const containerIndex =
-          updatedDeployment.spec.template.spec.containers.findIndex(
-            (c) => c.name === updatedContainer.name
-          )
+      if (init) {
+        // Update the specific container in the deployment spec
+        if (updatedDeployment.spec?.template?.spec?.initContainers) {
+          const containerIndex =
+            updatedDeployment.spec.template.spec.initContainers.findIndex(
+              (c) => c.name === updatedContainer.name
+            )
 
-        if (containerIndex >= 0) {
-          updatedDeployment.spec.template.spec.containers[containerIndex] =
-            updatedContainer
+          if (containerIndex >= 0) {
+            updatedDeployment.spec.template.spec.initContainers[
+              containerIndex
+            ] = updatedContainer
+          }
+        }
+      } else {
+        // Update the specific container in the deployment spec
+        if (updatedDeployment.spec?.template?.spec?.containers) {
+          const containerIndex =
+            updatedDeployment.spec.template.spec.containers.findIndex(
+              (c) => c.name === updatedContainer.name
+            )
 
-          // Call the update API
-          await updateResource(
-            'deployments',
-            name,
-            namespace,
-            updatedDeployment
-          )
-          toast.success(
-            `Container ${updatedContainer.name} updated successfully`
-          )
-          setRefreshInterval(1000)
+          if (containerIndex >= 0) {
+            updatedDeployment.spec.template.spec.containers[containerIndex] =
+              updatedContainer
+          }
         }
       }
+
+      // Call the update API
+      await updateResource('deployments', name, namespace, updatedDeployment)
+      toast.success(`Container ${updatedContainer.name} updated successfully`)
+      setRefreshInterval(1000)
     } catch (error) {
       console.error('Failed to update container:', error)
       toast.error(
@@ -517,6 +526,42 @@ export function DeploymentDetail(props: { namespace: string; name: string }) {
                   </CardContent>
                 </Card>
 
+                {deployment.spec?.template.spec?.initContainers?.length &&
+                  deployment.spec?.template.spec?.initContainers?.length >
+                    0 && (
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>
+                          Init Containers (
+                          {
+                            deployment.spec?.template?.spec?.initContainers
+                              ?.length
+                          }
+                          )
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="space-y-6">
+                          <div className="space-y-4">
+                            {deployment.spec?.template?.spec?.initContainers?.map(
+                              (container) => (
+                                <ContainerTable
+                                  key={container.name}
+                                  container={container}
+                                  onContainerUpdate={(updatedContainer) =>
+                                    handleContainerUpdate(
+                                      updatedContainer,
+                                      true
+                                    )
+                                  }
+                                />
+                              )
+                            )}
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
                 <Card>
                   <CardHeader>
                     <CardTitle>
@@ -533,7 +578,9 @@ export function DeploymentDetail(props: { namespace: string; name: string }) {
                             <ContainerTable
                               key={container.name}
                               container={container}
-                              onContainerUpdate={handleContainerUpdate}
+                              onContainerUpdate={(updatedContainer) =>
+                                handleContainerUpdate(updatedContainer)
+                              }
                             />
                           )
                         )}
@@ -610,7 +657,7 @@ export function DeploymentDetail(props: { namespace: string; name: string }) {
                   content: (
                     <PodTable
                       pods={relatedPods}
-                      isLoading={isLoadingRelated}
+                      isLoading={isLoadingPods}
                       labelSelector={labelSelector}
                     />
                   ),
@@ -623,14 +670,10 @@ export function DeploymentDetail(props: { namespace: string; name: string }) {
                       <LogViewer
                         namespace={namespace}
                         pods={relatedPods}
-                        containers={
-                          relatedPods?.[0]?.spec?.containers?.map(
-                            (container) => ({
-                              name: container.name,
-                              image: container.image || '',
-                            })
-                          ) || []
-                        }
+                        containers={toSimpleContainer(
+                          deployment.spec?.template?.spec?.initContainers,
+                          deployment.spec?.template?.spec?.containers
+                        )}
                       />
                     </div>
                   ),
@@ -644,14 +687,10 @@ export function DeploymentDetail(props: { namespace: string; name: string }) {
                         <Terminal
                           namespace={namespace}
                           pods={relatedPods}
-                          containers={
-                            relatedPods[0].spec?.containers?.map(
-                              (container) => ({
-                                name: container.name,
-                                image: container.image || '',
-                              })
-                            ) || []
-                          }
+                          containers={toSimpleContainer(
+                            deployment.spec?.template?.spec?.initContainers,
+                            deployment.spec?.template?.spec?.containers
+                          )}
                         />
                       )}
                     </div>
@@ -660,21 +699,13 @@ export function DeploymentDetail(props: { namespace: string; name: string }) {
               ]
             : []),
           {
-            value: 'services',
-            label: (
-              <>
-                Services{' '}
-                {relatedResources?.services && (
-                  <Badge variant="secondary">
-                    {relatedResources.services.length}
-                  </Badge>
-                )}
-              </>
-            ),
+            value: 'Related',
+            label: 'Related',
             content: (
-              <ServiceTable
-                services={relatedResources?.services}
-                isLoading={isLoadingRelated}
+              <RelatedResourcesTable
+                resource={'deployments'}
+                name={name}
+                namespace={namespace}
               />
             ),
           },
@@ -694,7 +725,10 @@ export function DeploymentDetail(props: { namespace: string; name: string }) {
                     <VolumeTable
                       namespace={namespace}
                       volumes={deployment.spec?.template?.spec?.volumes}
-                      containers={deployment.spec?.template?.spec?.containers}
+                      containers={toSimpleContainer(
+                        deployment.spec?.template?.spec?.initContainers,
+                        deployment.spec?.template?.spec?.containers
+                      )}
                       isLoading={isLoadingDeployment}
                     />
                   ),
@@ -719,7 +753,10 @@ export function DeploymentDetail(props: { namespace: string; name: string }) {
               <PodMonitoring
                 namespace={namespace}
                 pods={relatedPods}
-                containers={relatedPods?.[0]?.spec?.containers || []}
+                containers={toSimpleContainer(
+                  deployment.spec?.template?.spec?.initContainers,
+                  deployment.spec?.template?.spec?.containers
+                )}
                 labelSelector={labelSelector}
               />
             ),

@@ -9,6 +9,7 @@ import {
   ImageTagInfo,
   OverviewData,
   PodMetrics,
+  RelatedResources,
   ResourcesTypeMap,
   ResourceType,
   ResourceTypeMap,
@@ -337,9 +338,6 @@ export const useResources = <T extends ResourceType>(
     enabled: !options?.disable,
     select: (data: ResourcesTypeMap[T]): ResourcesItems<T> => data.items,
     placeholderData: (prevData) => prevData,
-    retry(failureCount, error) {
-      return failureCount < 3 && (error as unknown as Response).status > 500
-    },
     refetchInterval: options?.refreshInterval || 0,
     staleTime: options?.staleTime || (resource === 'crds' ? 5000 : 1000),
   })
@@ -471,11 +469,12 @@ export const fetchResourceUsageHistory = (
 
 export const useResourceUsageHistory = (
   duration: string,
-  options?: { staleTime?: number; instance?: string }
+  options?: { staleTime?: number; instance?: string; enabled?: boolean }
 ) => {
   return useQuery({
     queryKey: ['resource-usage-history', duration, options?.instance],
     queryFn: () => fetchResourceUsageHistory(duration, options?.instance),
+    enabled: options?.enabled,
     staleTime: options?.staleTime || 10000, // 10 seconds cache
     refetchInterval: 30000, // Auto refresh every 30 seconds for historical data
     retry: 0,
@@ -1042,6 +1041,30 @@ export function useImageTags(image: string, options?: { enabled?: boolean }) {
     queryKey: ['image-tags', image],
     queryFn: () => getImageTags(image),
     enabled: !!image && (options?.enabled ?? true),
+    staleTime: 60 * 1000, // 1 min
+    placeholderData: (prev) => prev,
+  })
+}
+
+export async function getRelatedResources(
+  resource: ResourceType,
+  name: string,
+  namespace?: string
+) {
+  const resp = await apiClient.get<RelatedResources[]>(
+    `/${resource}/${namespace ? namespace : '_all'}/${name}/related`
+  )
+  return resp
+}
+
+export function useRelatedResources(
+  resource: ResourceType,
+  name: string,
+  namespace?: string
+) {
+  return useQuery({
+    queryKey: ['related-resources', resource, name, namespace],
+    queryFn: () => getRelatedResources(resource, name, namespace),
     staleTime: 60 * 1000, // 1 min
     placeholderData: (prev) => prev,
   })
