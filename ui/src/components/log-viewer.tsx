@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   IconClearAll,
   IconDownload,
+  IconMaximize,
+  IconMinimize,
   IconPalette,
   IconSearch,
   IconSettings,
@@ -67,9 +69,15 @@ export function LogViewer({
   const [autoScroll, setAutoScroll] = useState(true)
   const [follow, setFollow] = useState(true)
   const [isReconnecting, setIsReconnecting] = useState(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [wordWrap, setWordWrap] = useState(true)
   const [logTheme, setLogTheme] = useState<LogTheme>(() => {
     const saved = localStorage.getItem('log-viewer-theme')
     return (saved as LogTheme) || 'classic'
+  })
+  const [fontSize, setFontSize] = useState(() => {
+    const saved = localStorage.getItem('log-viewer-font-size')
+    return saved ? parseInt(saved, 10) : 14
   })
   const logContainerRef = useRef<HTMLDivElement>(null)
   const [logStartIndex, setLogStartIndex] = useState(0)
@@ -105,6 +113,12 @@ export function LogViewer({
   const handleThemeChange = useCallback((theme: LogTheme) => {
     setLogTheme(theme)
     localStorage.setItem('log-viewer-theme', theme)
+  }, [])
+
+  // Handle font size change and persist to localStorage
+  const handleFontSizeChange = useCallback((size: number) => {
+    setFontSize(size)
+    localStorage.setItem('log-viewer-font-size', size.toString())
   }, [])
 
   // Quick theme cycling function
@@ -221,7 +235,12 @@ export function LogViewer({
     URL.revokeObjectURL(url)
   }
 
-  // Keyboard shortcuts
+  // Handle fullscreen toggle
+  const toggleFullscreen = useCallback(() => {
+    setIsFullscreen((prev) => !prev)
+  }, [])
+
+  // Handle keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Ctrl/Cmd + F to focus search
@@ -232,18 +251,47 @@ export function LogViewer({
         ) as HTMLInputElement
         searchInput?.focus()
       }
-      // ESC to clear search
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        toggleFullscreen()
+      }
       if (e.key === 'Escape' && searchTerm) {
         setSearchTerm('')
+      }
+      // Alt/Option + Z to toggle word wrap
+      if (e.altKey && (e.key === 'z' || e.key === 'Z' || e.key === 'Ω')) {
+        e.preventDefault()
+        setWordWrap((prev) => !prev)
+      }
+      // Font size shortcuts
+      if ((e.ctrlKey || e.metaKey) && (e.key === '=' || e.key === '+')) {
+        e.preventDefault()
+        handleFontSizeChange(Math.min(24, fontSize + 1))
+      }
+      if ((e.ctrlKey || e.metaKey) && (e.key === '-' || e.key === '_')) {
+        e.preventDefault()
+        handleFontSizeChange(Math.max(10, fontSize - 1))
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === '0') {
+        e.preventDefault()
+        handleFontSizeChange(14) // Reset to default font size
       }
     }
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [searchTerm])
+  }, [
+    searchTerm,
+    isFullscreen,
+    toggleFullscreen,
+    setWordWrap,
+    fontSize,
+    handleFontSizeChange,
+  ])
 
   return (
-    <Card className="h-full flex flex-col">
+    <Card
+      className={`h-full flex flex-col py-4 gap-0 ${isFullscreen ? 'fixed inset-0 z-50 m-0 rounded-none' : ''} ${wordWrap ? 'whitespace-pre-wrap' : 'whitespace-pre'} `}
+    >
       <CardHeader>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -392,6 +440,15 @@ export function LogViewer({
                     />
                   </div>
 
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="word-wrap">Word Wrap</Label>
+                    <Switch
+                      id="word-wrap"
+                      checked={wordWrap}
+                      onCheckedChange={setWordWrap}
+                    />
+                  </div>
+
                   {/* Log Theme Selector */}
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
@@ -421,23 +478,35 @@ export function LogViewer({
                         </SelectContent>
                       </Select>
                     </div>
+                  </div>
 
-                    {/* Theme Preview */}
-                    <div
-                      className={`${LOG_THEMES[logTheme].bg} ${LOG_THEMES[logTheme].text} p-2 rounded text-xs space-y-1`}
-                    >
-                      <div>
-                        2024-12-09T10:30:15Z INFO Starting application...
-                      </div>
-                      <div className={LOG_THEMES[logTheme].warning}>
-                        2024-12-09T10:30:16Z WARN Configuration file not found
-                      </div>
-                      <div className={LOG_THEMES[logTheme].error}>
-                        2024-12-09T10:30:17Z ERROR Failed to connect to database
-                      </div>
-                      <div className={LOG_THEMES[logTheme].accent}>
-                        2024-12-09T10:30:18Z DEBUG Connection retry attempt
-                      </div>
+                  {/* Font Size Selector */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="font-size">Font Size</Label>
+                      <Select
+                        value={fontSize.toString()}
+                        onValueChange={(value) =>
+                          handleFontSizeChange(Number(value))
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="10">10px</SelectItem>
+                          <SelectItem value="11">11px</SelectItem>
+                          <SelectItem value="12">12px</SelectItem>
+                          <SelectItem value="13">13px</SelectItem>
+                          <SelectItem value="14">14px</SelectItem>
+                          <SelectItem value="15">15px</SelectItem>
+                          <SelectItem value="16">16px</SelectItem>
+                          <SelectItem value="18">18px</SelectItem>
+                          <SelectItem value="20">20px</SelectItem>
+                          <SelectItem value="22">22px</SelectItem>
+                          <SelectItem value="24">24px</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
                   </div>
 
@@ -457,6 +526,36 @@ export function LogViewer({
                         <span>Clear Search</span>
                         <kbd className="px-1 py-0.5 bg-muted rounded text-xs">
                           ESC
+                        </kbd>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Toggle Fullscreen</span>
+                        <kbd className="px-1 py-0.5 bg-muted rounded text-xs">
+                          Ctrl+Enter
+                        </kbd>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Toggle Word Wrap</span>
+                        <kbd className="px-1 py-0.5 bg-muted rounded text-xs">
+                          Alt+Z
+                        </kbd>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Increase Font Size</span>
+                        <kbd className="px-1 py-0.5 bg-muted rounded text-xs">
+                          Ctrl++
+                        </kbd>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Decrease Font Size</span>
+                        <kbd className="px-1 py-0.5 bg-muted rounded text-xs">
+                          Ctrl+-
+                        </kbd>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Reset Font Size</span>
+                        <kbd className="px-1 py-0.5 bg-muted rounded text-xs">
+                          Ctrl+0
                         </kbd>
                       </div>
                     </div>
@@ -485,6 +584,22 @@ export function LogViewer({
               <IconDownload className="h-4 w-4" />
             </Button>
 
+            {/* Fullscreen Toggle */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={toggleFullscreen}
+              title={
+                isFullscreen ? 'Exit fullscreen (ESC)' : 'Enter fullscreen'
+              }
+            >
+              {isFullscreen ? (
+                <IconMinimize className="h-4 w-4" />
+              ) : (
+                <IconMaximize className="h-4 w-4" />
+              )}
+            </Button>
+
             {/* Close */}
             {onClose && (
               <Button variant="outline" size="sm" onClick={onClose}>
@@ -498,8 +613,13 @@ export function LogViewer({
       <CardContent className="flex-1 p-0">
         <div
           ref={logContainerRef}
-          className={`h-full overflow-auto ${LOG_THEMES[logTheme].bg} ${LOG_THEMES[logTheme].text} text-sm px-4 space-y-1`}
-          style={{ height: 'calc(100vh - 340px)' }}
+          className={`h-full overflow-auto ${LOG_THEMES[logTheme].bg} ${LOG_THEMES[logTheme].text} space-y-1`}
+          style={{
+            height: isFullscreen
+              ? 'calc(100dvh - 60px)'
+              : 'calc(100dvh - 255px)',
+            fontSize: `${fontSize}px`,
+          }}
         >
           {isLoading && !logsData && (
             <div className="text-center opacity-60">Loading logs...</div>
@@ -521,7 +641,10 @@ export function LogViewer({
           {filteredLogs?.map((line, index) => {
             const segments = parseAnsi(line)
             return (
-              <div key={index} className="break-all">
+              <div
+                key={index}
+                className={wordWrap ? 'break-words' : 'break-all'}
+              >
                 {segments.map((segment, segIndex) => (
                   <span key={segIndex} style={ansiStateToCss(segment.styles)}>
                     {segment.text}
