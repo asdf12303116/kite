@@ -1,4 +1,6 @@
 import { clsx, type ClassValue } from 'clsx'
+import { format, formatDistance } from 'date-fns'
+import { TFunction } from 'i18next'
 import { twMerge } from 'tailwind-merge'
 
 import { PodMetrics } from '@/types/api'
@@ -53,17 +55,9 @@ export function getAge(timestamp: string): string {
 }
 
 export function formatDate(timestamp: string, addTo = false): string {
-  const s = new Date(timestamp).toLocaleString(undefined, {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  })
-
-  return addTo ? `${s} (${getAge(timestamp)})` : s
+  const date = new Date(timestamp)
+  const s = format(date, 'yyyy-MM-dd HH:mm:ss')
+  return addTo ? `${s} (${formatDistance(new Date(), date)})` : s
 }
 
 export function formatChartXTicks(
@@ -163,4 +157,62 @@ export function formatPodMetrics(metric: PodMetrics): {
   })
 
   return { cpu, memory }
+}
+export interface RBACErrorInfo {
+  user: string
+  verb: string
+  resource: string
+  namespace?: string
+  cluster: string
+}
+
+export function parseRBACError(errorMessage: string): RBACErrorInfo | null {
+  const namespacePattern =
+    /user (.+) does not have permission to (.+) (.+) in namespace (.+) on cluster (.+)/
+  const namespaceMatch = errorMessage.match(namespacePattern)
+
+  if (namespaceMatch) {
+    return {
+      user: namespaceMatch[1],
+      verb: namespaceMatch[2],
+      resource: namespaceMatch[3],
+      namespace: namespaceMatch[4],
+      cluster: namespaceMatch[5],
+    }
+  }
+
+  return null
+}
+
+export function isRBACError(errorMessage: string): boolean {
+  return !!parseRBACError(errorMessage)
+}
+
+export function translateError(error: Error | unknown, t: TFunction): string {
+  if (!(error instanceof Error)) {
+    return t('common.error', {
+      error: String(error),
+    })
+  }
+  const rbacInfo = parseRBACError(error.message)
+
+  if (!rbacInfo) {
+    return error.message
+  }
+
+  if (rbacInfo.namespace) {
+    return t('rbac.noPermissionNamespace', {
+      user: rbacInfo.user,
+      verb: t(`rbac.verb.${rbacInfo.verb}`, {
+        defaultValue: rbacInfo.verb,
+      }),
+      resource: t(`nav.${rbacInfo.resource}`, {
+        defaultValue: rbacInfo.resource,
+      }),
+      namespace: rbacInfo.namespace === 'All' ? 'All' : rbacInfo.namespace,
+      cluster: rbacInfo.cluster,
+    })
+  }
+
+  return error.message
 }

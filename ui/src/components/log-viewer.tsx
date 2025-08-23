@@ -10,11 +10,13 @@ import {
   IconX,
 } from '@tabler/icons-react'
 import { Pod } from 'kubernetes-types/core/v1'
+import { useTranslation } from 'react-i18next'
 
 import { SimpleContainer } from '@/types/k8s'
 import { LOG_THEMES, LogTheme } from '@/types/themes'
 import { ansiStateToCss, parseAnsi, stripAnsi } from '@/lib/ansi-parser'
-import { useLogsStream } from '@/lib/api'
+import { useLogsWebSocket } from '@/lib/api'
+import { translateError } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -67,10 +69,16 @@ export function LogViewer({
   const [previous, setPrevious] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
   const [autoScroll, setAutoScroll] = useState(true)
-  const [follow, setFollow] = useState(true)
   const [isReconnecting, setIsReconnecting] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
-  const [wordWrap, setWordWrap] = useState(true)
+  const [wordWrap, setWordWrap] = useState<boolean>(() => {
+    const saved = localStorage.getItem('log-viewer-word-wrap')
+    if (saved === null) {
+      localStorage.setItem('log-viewer-word-wrap', 'true')
+      return true
+    }
+    return saved === 'true'
+  })
   const [logTheme, setLogTheme] = useState<LogTheme>(() => {
     const saved = localStorage.getItem('log-viewer-theme')
     return (saved as LogTheme) || 'classic'
@@ -85,6 +93,8 @@ export function LogViewer({
   const [selectPodName, setSelectPodName] = useState<string | undefined>(
     podName || pods?.[0]?.metadata?.name || ''
   )
+
+  const { t } = useTranslation()
 
   useEffect(() => {
     if (podName) {
@@ -141,19 +151,15 @@ export function LogViewer({
     }
   }, [autoScroll])
 
-  // Use the new streaming logs hook
-  const { logs, isLoading, error, isConnected, downloadSpeed } = useLogsStream(
-    namespace,
-    selectPodName!,
-    {
+  // Use the new WebSocket logs hook
+  const { logs, isLoading, error, isConnected, downloadSpeed, refetch } =
+    useLogsWebSocket(namespace, selectPodName!, {
       container: selectedContainer,
       tailLines,
       timestamps,
       previous,
-      follow,
       enabled: true,
-    }
-  )
+    })
 
   const handleClearLogs = useCallback(() => {
     if (logs) {
@@ -174,7 +180,7 @@ export function LogViewer({
     }, 500)
 
     return () => clearTimeout(timer)
-  }, [selectedContainer, tailLines, timestamps, previous, follow, isLoading])
+  }, [selectedContainer, tailLines, timestamps, previous, isLoading])
 
   // Hide reconnecting state when loading completes
   useEffect(() => {
@@ -205,22 +211,54 @@ export function LogViewer({
 
     const handleWheelEvent = (e: WheelEvent) => {
       e.stopPropagation()
+      setTimeout(() => {
+        if (logContainer) {
+          const { scrollTop, scrollHeight, clientHeight } = logContainer
+          const isAtBottom = scrollTop + clientHeight >= scrollHeight - 10 // 10px tolerance
+
+          if (isAtBottom && !autoScroll) {
+            setAutoScroll(true)
+          } else if (!isAtBottom && autoScroll) {
+            setAutoScroll(false)
+          }
+        }
+      }, 50)
     }
 
-    const handleTouchMove = (e: TouchEvent) => {
+    const handleTouchStart = (e: TouchEvent) => {
       e.stopPropagation()
     }
 
+    const handleTouchEnd = (e: TouchEvent) => {
+      e.stopPropagation()
+      setTimeout(() => {
+        if (logContainer) {
+          const { scrollTop, scrollHeight, clientHeight } = logContainer
+          const isAtBottom = scrollTop + clientHeight >= scrollHeight - 10 // 10px tolerance
+
+          if (isAtBottom && !autoScroll) {
+            setAutoScroll(true)
+          } else if (!isAtBottom && autoScroll) {
+            setAutoScroll(false)
+          }
+        }
+      }, 50)
+    }
+
     logContainer.addEventListener('wheel', handleWheelEvent, { passive: true })
-    logContainer.addEventListener('touchmove', handleTouchMove, {
+    logContainer.addEventListener('touchstart', handleTouchStart, {
+      passive: true,
+    })
+    logContainer.addEventListener('touchend', handleTouchEnd, {
       passive: true,
     })
 
     return () => {
       logContainer.removeEventListener('wheel', handleWheelEvent)
-      logContainer.removeEventListener('touchmove', handleTouchMove)
+      logContainer.removeEventListener('touchstart', handleTouchStart)
+      logContainer.removeEventListener('touchend', handleTouchEnd)
     }
-  }, [])
+  }, [autoScroll])
 
   const displayedLogCount = useMemo(
     () => (logsData?.logs?.slice(logStartIndex) || []).length,
@@ -263,6 +301,13 @@ export function LogViewer({
     setIsFullscreen((prev) => !prev)
   }, [])
 
+  const toggleWordWrap = useCallback(() => {
+    setWordWrap((prev) => {
+      localStorage.setItem('log-viewer-word-wrap', `${!prev}`)
+      return !prev
+    })
+  }, [])
+
   // Handle keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -283,7 +328,7 @@ export function LogViewer({
       // Alt/Option + Z to toggle word wrap
       if (e.altKey && (e.key === 'z' || e.key === 'Z' || e.key === 'Ω')) {
         e.preventDefault()
-        setWordWrap((prev) => !prev)
+        toggleWordWrap()
       }
       // Font size shortcuts
       if ((e.ctrlKey || e.metaKey) && (e.key === '=' || e.key === '+')) {
@@ -306,9 +351,9 @@ export function LogViewer({
     searchTerm,
     isFullscreen,
     toggleFullscreen,
-    setWordWrap,
     fontSize,
     handleFontSizeChange,
+    toggleWordWrap,
   ])
 
   return (
@@ -330,7 +375,10 @@ export function LogViewer({
                     </span>
                   )}
                 </span>
-                <ConnectionIndicator isConnected={isConnected} />
+                <ConnectionIndicator
+                  isConnected={isConnected}
+                  onReconnect={refetch}
+                />
                 <NetworkSpeedIndicator
                   downloadSpeed={downloadSpeed}
                   uploadSpeed={0}
@@ -338,12 +386,6 @@ export function LogViewer({
                 {isLoading && <span>Loading...</span>}
                 {isReconnecting && (
                   <span className="text-blue-600">Reconnecting...</span>
-                )}
-                {error && (
-                  <span className="text-red-600">
-                    Error:{' '}
-                    {error instanceof Error ? error.message : 'Unknown error'}
-                  </span>
                 )}
               </div>
             </CardDescription>
@@ -437,15 +479,6 @@ export function LogViewer({
                   </div>
 
                   <div className="flex items-center justify-between">
-                    <Label htmlFor="follow">Follow Logs (Real-time)</Label>
-                    <Switch
-                      id="follow"
-                      checked={follow}
-                      onCheckedChange={setFollow}
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-between">
                     <Label htmlFor="previous">Previous Container</Label>
                     <Switch
                       id="previous"
@@ -468,7 +501,7 @@ export function LogViewer({
                     <Switch
                       id="word-wrap"
                       checked={wordWrap}
-                      onCheckedChange={setWordWrap}
+                      onCheckedChange={toggleWordWrap}
                     />
                   </div>
 
@@ -652,8 +685,7 @@ export function LogViewer({
 
           {error && (
             <div className={`text-center ${LOG_THEMES[logTheme].error}`}>
-              Failed to load logs:{' '}
-              {error instanceof Error ? error.message : 'Unknown error'}
+              {translateError(error, t)}
             </div>
           )}
 
@@ -670,11 +702,38 @@ export function LogViewer({
                 key={index}
                 className={wordWrap ? 'break-words' : 'break-all'}
               >
-                {segments.map((segment, segIndex) => (
-                  <span key={segIndex} style={ansiStateToCss(segment.styles)}>
-                    {segment.text}
-                  </span>
-                ))}
+                {segments.map((segment, segIndex) => {
+                  const text = segment.text
+                  if (!searchTerm) {
+                    return (
+                      <span
+                        key={segIndex}
+                        style={ansiStateToCss(segment.styles)}
+                      >
+                        {text}
+                      </span>
+                    )
+                  }
+
+                  const parts = text.split(new RegExp(`(${searchTerm})`, 'gi'))
+                  return (
+                    <span key={segIndex} style={ansiStateToCss(segment.styles)}>
+                      {parts.map((part, i) => {
+                        if (part.toLowerCase() === searchTerm.toLowerCase()) {
+                          return (
+                            <span
+                              key={i}
+                              className="bg-yellow-500/50 dark:bg-yellow-500/30 rounded px-0.5"
+                            >
+                              {part}
+                            </span>
+                          )
+                        }
+                        return part
+                      })}
+                    </span>
+                  )
+                })}
               </div>
             )
           })}
@@ -698,9 +757,14 @@ export function LogViewer({
                 }`}
                 onClick={() => {
                   if (logContainerRef.current) {
-                    logContainerRef.current.scrollTop =
-                      logContainerRef.current.scrollHeight
                     setAutoScroll(true)
+                    // Use requestAnimationFrame to ensure autoScroll state is updated first
+                    requestAnimationFrame(() => {
+                      if (logContainerRef.current) {
+                        logContainerRef.current.scrollTop =
+                          logContainerRef.current.scrollHeight
+                      }
+                    })
                   }
                 }}
               >

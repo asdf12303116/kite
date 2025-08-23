@@ -12,6 +12,7 @@ interface User {
   name: string
   avatar_url: string
   provider: string
+  roles?: { name: string }[]
 }
 
 interface AuthContextType {
@@ -173,10 +174,20 @@ export function AuthProvider({ children }: AuthProviderProps) {
   // Set up automatic token refresh
   useEffect(() => {
     if (!user) return
+    const refreshKey = 'lastRefreshTokenAt'
+    const lastRefreshAt = localStorage.getItem(refreshKey)
+    const now = Date.now()
+
+    // If the last refresh was more than 30 minutes ago, refresh immediately
+    if (!lastRefreshAt || now - Number(lastRefreshAt) > 30 * 60 * 1000) {
+      refreshToken()
+      localStorage.setItem(refreshKey, String(now))
+    }
 
     const refreshInterval = setInterval(
       () => {
         refreshToken()
+        localStorage.setItem(refreshKey, String(Date.now()))
       },
       30 * 60 * 1000
     ) // Refresh every 30 minutes

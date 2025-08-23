@@ -13,6 +13,7 @@ import (
 	"github.com/zxh326/kite/pkg/cluster"
 	"github.com/zxh326/kite/pkg/common"
 	"github.com/zxh326/kite/pkg/kube"
+	"github.com/zxh326/kite/pkg/rbac"
 	"github.com/zxh326/kite/pkg/utils"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -37,10 +38,16 @@ func (h *NodeTerminalHandler) HandleNodeTerminalWebSocket(c *gin.Context) {
 		return
 	}
 
+	user := c.MustGet("user").(common.User)
+
 	websocket.Handler(func(conn *websocket.Conn) {
 		defer func() {
 			_ = conn.Close()
 		}()
+		if !rbac.CanAccess(user, "nodes", "exec", cs.Name, "") {
+			h.sendErrorMessage(conn, rbac.NoAccess(user.Key(), string(common.VerbExec), "nodes", "", cs.Name))
+			return
+		}
 		node, err := cs.K8sClient.ClientSet.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
 		if err != nil {
 			log.Printf("Failed to get node %s: %v", nodeName, err)
@@ -84,7 +91,12 @@ func (h *NodeTerminalHandler) HandleNodeTerminalWebSocket(c *gin.Context) {
 }
 
 func (h *NodeTerminalHandler) createNodeAgent(ctx context.Context, cs *cluster.ClientSet, nodeName string) (string, error) {
-	podName := fmt.Sprintf("%s-%s-%s", common.NodeTerminalPodName, nodeName, utils.RandomString(5))
+	truncateNodeName := nodeName
+	if len(nodeName)+len(common.NodeTerminalPodName)+5 > 63 {
+		maxLength := 63 - len(common.NodeTerminalPodName) - 5
+		truncateNodeName = nodeName[:maxLength]
+	}
+	podName := fmt.Sprintf("%s-%s-%s", common.NodeTerminalPodName, truncateNodeName, utils.RandomString(5))
 
 	// Define the kite node agent pod spec
 	pod := &corev1.Pod{
